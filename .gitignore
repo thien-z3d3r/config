@@ -3,6 +3,7 @@ cache
 command-history
 search-history
 lib.pl
+socket
 
 # Python cache and backups
 __pycache__/
