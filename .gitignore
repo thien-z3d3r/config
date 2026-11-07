@@ -1,0 +1,10 @@
+# cmus cache and runtime history
+cache
+command-history
+search-history
+lib.pl
+
+# Python cache and backups
+__pycache__/
+*.py[cod]
+*.bak

@@ -1,0 +1,4 @@
+set output_plugin=pulse
+set dsp.alsa.device=default
+set status_display_program=/home/skadi/.config/cmus/scripts/cmus-status-hook.sh
+colorscheme catppuccin
