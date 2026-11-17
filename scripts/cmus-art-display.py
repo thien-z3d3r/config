@@ -60,6 +60,37 @@ def visible_length(text: str) -> int:
     return len(strip_ansi(text))
 
 
+def truncate_ansi(text: str, max_vis: int) -> tuple[str, int]:
+    out = []
+    vis = 0
+    i = 0
+    n = len(text)
+    while i < n and vis < max_vis:
+        m = ANSI_ESCAPE_RE.match(text, i)
+        if m:
+            out.append(m.group(0))
+            i = m.end()
+        else:
+            out.append(text[i])
+            vis += 1
+            i += 1
+    return "".join(out), vis
+
+
+def overlay_bottom_right_tag(art_lines: list[str], tag: str) -> list[str]:
+    if not art_lines:
+        return art_lines
+    tag_w = visible_length(tag)
+    max_w = max(visible_length(line) for line in art_lines)
+    if max_w < tag_w:
+        return art_lines
+    keep_w = max_w - tag_w
+    prefix, vis = truncate_ansi(art_lines[-1], keep_w)
+    pad = " " * max(0, keep_w - vis)
+    new_last = f"{prefix}\033[0m{pad}{tag}"
+    return art_lines[:-1] + [new_last]
+
+
 def center_line(line: str, width: int) -> str:
     vis_len = visible_length(line)
     pad = max(0, (width - vis_len) // 2)
@@ -171,6 +202,8 @@ def get_audio_properties(audio_file: str, duration: int = 0) -> dict:
         "sample_rate": "",
         "bit_depth": "",
         "bit_rate": "",
+        "sample_rate_hz": 0,
+        "bit_depth_bits": 0,
     }
     if not audio_file or not os.path.exists(audio_file):
         return props
@@ -184,7 +217,7 @@ def get_audio_properties(audio_file: str, duration: int = 0) -> dict:
                 "-select_streams",
                 "a:0",
                 "-show_entries",
-                "stream=codec_name,sample_rate,bits_per_raw_sample,bit_rate:format=bit_rate",
+                "stream=codec_name,sample_rate,bits_per_raw_sample,bits_per_sample,bit_rate:format=bit_rate",
                 "-of",
                 "default=noprint_wrappers=1",
                 audio_file,
@@ -195,6 +228,7 @@ def get_audio_properties(audio_file: str, duration: int = 0) -> dict:
         )
         if res.returncode == 0:
             br_candidates = []
+            bits_per_sample = 0
             for line in res.stdout.splitlines():
                 if "=" in line:
                     k, v = line.split("=", 1)
@@ -204,6 +238,7 @@ def get_audio_properties(audio_file: str, duration: int = 0) -> dict:
                     elif k == "sample_rate" and v and v != "N/A":
                         try:
                             sr = int(v)
+                            props["sample_rate_hz"] = sr
                             if sr >= 1000:
                                 props["sample_rate"] = f"{sr / 1000:.1f} kHz"
                             else:
@@ -212,8 +247,21 @@ def get_audio_properties(audio_file: str, duration: int = 0) -> dict:
                             props["sample_rate"] = v
                     elif k == "bits_per_raw_sample" and v and v != "N/A":
                         props["bit_depth"] = f"{v}-bit"
+                        try:
+                            props["bit_depth_bits"] = int(v)
+                        except ValueError:
+                            pass
+                    elif k == "bits_per_sample" and v and v != "N/A":
+                        try:
+                            bits_per_sample = int(v)
+                        except ValueError:
+                            pass
                     elif k == "bit_rate" and v != "N/A":
                         br_candidates.append(v)
+
+            if props["bit_depth_bits"] == 0 and bits_per_sample > 0:
+                props["bit_depth_bits"] = bits_per_sample
+                props["bit_depth"] = f"{bits_per_sample}-bit"
 
             if br_candidates:
                 try:
@@ -496,12 +544,20 @@ class DisplayManager:
             if curr_file != self.last_file or not self.last_art_lines:
                 self.last_file = curr_file
                 self.last_img_path = extract_cover_art(curr_file)
-                self.last_art_lines = render_art(
+                art_lines = render_art(
                     self.last_img_path, avail_art_w, avail_art_h
                 )
                 self.last_audio_props = get_audio_properties(
                     curr_file, status_info["duration"]
                 )
+                is_hires = (
+                    self.last_audio_props.get("bit_depth_bits", 0) >= 24
+                    or self.last_audio_props.get("sample_rate_hz", 0) >= 48000
+                )
+                if is_hires:
+                    hires_tag = "\033[1;38;2;30;30;46;48;2;249;226;175m Hi-RES \033[0m"
+                    art_lines = overlay_bottom_right_tag(art_lines, hires_tag)
+                self.last_art_lines = art_lines
 
             art_h = len(self.last_art_lines)
             total_content_lines = art_h + 6
